@@ -1,141 +1,329 @@
 import re
-from urllib.parse import urlparse, urljoin, urldefrag, urllib.request
+from urllib.parse import urlparse, urljoin, urldefrag
 from bs4 import BeautifulSoup
-from lxml import html, etree
-import hashlib
 from collections import defaultdict, Counter
+#TODO:
+# remove number from most common words
+# still need full runthrough at least once :/
 
-# statistics containers
-unique_urls = set()
-page_word_counts = {}
-all_words_counter = Counter()
-subdomains = defaultdict(set)
-longest_page = {"url": "", "word_count": 0}
+# Simple statistics containers
+UNIQUE_PAGES = set()
+PAGE_WORD_COUNTS = {}
+ALL_WORDS_COUNTER = Counter()
+ALL_SUBDOMAINS = defaultdict(set)
+LONGEST_PAGE = {"url": "", "word_count": 0}
 
-STOP_WORDS = set(["a", "about", "above", "after", "again", "against", "all",
-            "am", "an", "and", "any", "are", "aren", "t", "as", "at", # separate 't' for tokenizing? UNSURE. 
-            "be", "because", "been", "before", "being", "below", "between",
-            "both", "but", "by", "can", "not", "cannot", "could",
-            "couldn", "did", "didn", "do", "does", "doesn", "doing",
-            "don", "down", "during", "each", "few", "for", "from",
-            "further", "had", "hadn", "has", "hasn", "have", "haven",
-            "having", "he", "d", "ll", "s", "her", "here", "hers",
-            "herself", "him", "himself", "his", "how", "i", "if", "in",
-            "into", "is", "isn", "it", "its", "itself", "let", "me",
-            "more", "most", "mustn", "my", "myself", "no", "nor", "of",
-            "off", "on", "once", "only", "or", "other", "ought",
-            "our", "ours", "ourselves", "out", "over", "own", "same",
-            "shan", "she", "should", "shouldn", "so", "some", "such",
-            "than", "that", "the", "their", "theirs", "them", "themselves",
-            "then", "there", "these", "they", "this", "those",
-            "through", "to", "too", "under", "until", "up", "very",
-            "was", "wasn", "we", "what", "when", "where", "which",
-            "while", "who", "whom", "why", "with", "won", "would",
-            "wouldn", "you", "your", "yours", "yourself", "yourselves"])
-            # if x in set ([]) --> O(1) time complexity
+STOP_WORDS = {
+    "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", 
+    "any", "are", "arent", "as", "at", "be", "because", "been", "before", "being", 
+    "below", "between", "both", "but", "by", "can", "cannot", "could", "couldnt", 
+    "did", "didnt", "do", "does", "doesnt", "doing", "dont", "down", "during", 
+    "each", "few", "for", "from", "further", "had", "hadnt", "has", "hasnt", 
+    "have", "havent", "having", "he", "hed", "hell", "hes", "her", "here", 
+    "heres", "hers", "herself", "him", "himself", "his", "how", "hows", "i", 
+    "id", "ill", "im", "ive", "if", "in", "into", "is", "isnt", "it", "its", 
+    "itself", "lets", "me", "more", "most", "mustnt", "my", "myself", 
+    "no", "nor", "not", "of", "off", "on", "once", "only", "or", "other", "ought", 
+    "our", "ours", "ourselves", "out", "over", "own", "same", "shant", "she", 
+    "shed", "shell", "shes", "should", "shouldnt", "so", "some", "such", "than", 
+    "that", "thats", "the", "their", "theirs", "them", "themselves", "then", 
+    "there", "theres", "these", "they", "theyd", "theyll", "theyre", "theyve", 
+    "this", "those", "through", "to", "too", "under", "until", "up", "very", "was", 
+    "wasnt", "we", "wed", "well", "were", "weve", "were", "werent", "what", 
+    "whats", "when", "whens", "where", "wheres", "which", "while", "who", "whos", 
+    "whom", "why", "whys", "with", "wont", "would", "wouldnt", "you", "youd", 
+    "youll", "youre", "youve", "your", "yours", "yourself", "yourselves"
+}
 
-def scraper(url, resp):
-    links = extract_next_links(url, resp)
-    return [link for link in links if is_valid(link)]
+KNOWN_TRAP_PATTERNS = [
+    r'.*/events/.*',
+    r'.*/event/.*',
+    r'.*/calendar/.*',
+    r'.*/ical/.*',
+    r'.*/~eppstein/pix/.*',
+    r'.*/doku.php.*',
+    r'.*/~dechter/.*', # unsure abt this one
+]
+
+KNOWN_TRAP_DOMAINS = {
+    'wics.ics.uci.edu',
+    'ngs.ics.uci.edu',
+    'isg.ics.uci.edu',
+    'grape.ics.uci.edu'
+}
+
+def normalize_url(url):
+    """Simple URL normalization - remove fragment and normalize"""
+    url, _ = urldefrag(url)
+    url = url.lower()
+    # Remove trailing slash
+    if url.endswith('/'):
+        url = url[:-1]
+    return url
+
+def extract_text_from_html(html_content):
+    """Extract text from HTML"""
+    if not html_content:
+        return ""
+    
+    try:
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Remove script and style elements
+        for script in soup(["script", "style"]):
+            script.decompose()
+        
+        # Get text
+        text = soup.get_text()
+        
+        # Clean up whitespace
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        text = ' '.join(chunk for chunk in chunks if chunk)
+        
+        return text
+    except:
+        return ""
+
+def tokenize_text(text):
+    """basic tokenizing"""
+    if not text:
+        return []
+    
+    tokens = []
+    
+    # Convert to lowercase
+    text = text.lower()
+    
+    # Process each line
+    lines = text.split('\n')
+    for line in lines:
+        line_words = line.split()
+        for word in line_words:
+            current_token = ''
+            for char in word:
+                if char.isalnum() and char.isascii():
+                    current_token += char
+                else:
+                    if current_token:
+                        tokens.append(current_token)
+                        current_token = ''
+            if current_token:
+                tokens.append(current_token)
+    
+    # Filter out stop words and very short tokens
+    filtered_tokens = []
+    for token in tokens:
+        if token not in STOP_WORDS and len(token) > 1:
+            filtered_tokens.append(token)
+    
+    return filtered_tokens
+
+def count_words(text):
+    """Count total words in text (for page length) w simple whitespace split"""
+    if not text:
+        return 0
+    words = text.split()
+    return len(words)
+
+def update_statistics(url, text):
+    """Update statistics for crawled page"""
+    global LONGEST_PAGE
+    
+    normalized_url = normalize_url(url)
+    if normalized_url in UNIQUE_PAGES: # Skip if already processed
+        return
+    UNIQUE_PAGES.add(normalized_url)
+    
+    # count words + update (simple word count for page length)
+    word_count = count_words(text)
+    PAGE_WORD_COUNTS[normalized_url] = word_count
+    
+    if word_count > LONGEST_PAGE["word_count"]:
+        LONGEST_PAGE = {"url": normalized_url, "word_count": word_count}
+    
+    tokens = tokenize_text(text)
+    for token in tokens:
+        ALL_WORDS_COUNTER[token] += 1 #global word ocunter
+    
+    parsed = urlparse(normalized_url)
+    domain = parsed.netloc.lower()
+    ALL_SUBDOMAINS[domain].add(normalized_url)
 
 def extract_next_links(url, resp):
+    """Extract links from a webpage response"""
     links = []
     if resp.status != 200: # 200 is OK, you got the page
         return links
-
-    if (600 <= resp.status <= 606): # when status is not 200, you can check the error here, if needed.
-        return (f"ERROR: {resp.status}")
     
-    # resp.raw_response: this is where the page actually is
-    if not resp.raw_response.content:
+    if not resp.raw_response or not resp.raw_response.content:
         return links
     
-    # parsing the html file
-    # BeautifulSoup recommended in assignment instructions
-    # INSTRUCTIONS HOW TO USE: https://www.geeksforgeeks.org/python/beautifulsoup-scraping-paragraphs-from-html/
     try:
-       html_parse = BeautifulSoup(content, 'html.parser') 
-    except:
-        return links
-    
-    text = html_parse.get_text(separator=' ', strip=True)
-    words = re.findall(r'\b[a-zA-Z]{2,}\b', text.lower())
-    words = [w for w in words if w not in STOP_WORDS]
-    
-    # statistics
-    defrag_url = urldefrag(url)[0]
-    unique_urls.add(defrag_url)
-    word_count = len(words)
-    page_word_counts[defrag_url] = word_count
-    
-    if word_count > longest_page["word_count"]:
-        longest_page["url"] = defrag_url
-        longest_page["word_count"] = word_count
-    
-    for word in words:
-        all_words_counter[word] += 1
-    
-    parsed = urlparse(defrag_url)
-    if parsed.netloc.endswith('.uci.edu'):
-        subdomains[parsed.netloc].add(defrag_url)
-    
-    # link extracktion
-    for link in html_parse.find_all('a', href=True):
-        href = link['href']
+        soup = BeautifulSoup(resp.raw_response.content, 'html.parser')
         
-        absolute_url = urljoin(url, href)
-        defragmented = urldefrag(absolute_url)[0]
-        links.append(defragmented)
+        for a_tag in soup.find_all('a', href=True): # Find all anchor tags
+            href = a_tag['href']
+            
+            # Skip empty links and javascript links
+            if not href or href.startswith(('javascript:', 'mailto:', 'tel:')):
+                continue
+
+            absolute_url = urljoin(url, href) # handle relative URLs
+            normalized_url = normalize_url(absolute_url) # normalize URL
+            links.append(normalized_url)
+            
+    except Exception as e:
+        print(f"Error extracting links from {url}: {e}")
     
     return links
 
 def is_valid(url):
-    # Decide whether to crawl this url or not. 
-    # If you decide to crawl it, return True; otherwise return False.
-    # There are already some conditions that return False.
+    """Check if URL should be crawled"""
     try:
         parsed = urlparse(url)
-        if parsed.scheme not in set(["http", "https"]):
+        
+        if parsed.scheme not in {"http", "https"}: # scheme check
             return False
+        
+        domain = parsed.netloc.lower() # domain check
+        if not domain:
+            return False
+        
+        if domain in KNOWN_TRAP_DOMAINS: # trap check
+            return False
+        
+        allowed_domains = ['ics.uci.edu', 'cs.uci.edu', 'informatics.uci.edu', 'stat.uci.edu']
+        is_allowed = False
+        for allowed_domain in allowed_domains:
+            if domain == allowed_domain or domain.endswith('.' + allowed_domain):
+                is_allowed = True
+                break
+        if not is_allowed:
+            return False     
         return not re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
             + r"|png|tiff?|mid|mp2|mp3|mp4"
             + r"|wav|avi|mov|mpeg|ram|m4v|mkv|ogg|ogv|pdf"
-            + r"|ps|eps|tex|ppt|pptx|doc|docx|xls|xlsx|names"
+            + r"|ps|pps|eps|tex|ppt|pptx|doc|docx|xls|xlsx|names"
             + r"|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso"
             + r"|epub|dll|cnf|tgz|sha1"
             + r"|thmx|mso|arff|rtf|jar|csv"
             + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower())
 
-    except TypeError:
-        print ("TypeError for ", parsed)
-        raise
+        
+        # TRAP AVOIDANCE:
+        # Check for known trap patterns
+        for pattern in KNOWN_TRAP_PATTERNS:
+            if re.match(pattern, url, re.I):
+                return False
+        
+        if path.count('/') > 10: # avoid deep paths (too many slashes)
+            return False
+        
+        # Avoid URLs with query parameters that look like traps
+        if parsed.query:
+            query = parsed.query.lower()
+            # Avoid pages with many query parameters
+            if len(query.split('&')) > 5:
+                return False
+            # Avoid specific trap query patterns
+            trap_queries = ['share=', 'replytocom=', 'action=', 'format=', 'download=', 'feed=']
+            if any(trap in query for trap in trap_queries):
+                return False
+        
+        # Additional trap avoidance: avoid URLs with specific patterns
+        trap_patterns = [
+            r'.*print=.*',
+            r'.*pdf=.*',
+            r'.*xml=.*',
+            r'.*json=.*',
+            r'.*rss=.*',
+            r'.*atom=.*',
+        ]
+        full_url = url.lower()
+        for pattern in trap_patterns:
+            if re.match(pattern, full_url):
+                return False
+        
+        return True
+        
+    except Exception as e:
+        print(f"Error in is_valid for {url}: {e}")
+        return False
 
-def print_stats():
-    """Print current statistics"""
-    print("\n" + "="*50)
-    print("CRAWLER STATISTICS")
-    print("="*50)
-    print(f"Unique pages found: {len(unique_urls)}")
-    print(f"Longest page: {longest_page['url']}")
-    print(f"  Word count: {longest_page['word_count']}")
+def generate_report():
+    """Generate the required report"""
+    report_lines = []
     
-    print("\nTop 10 words:")
-    for word, count in all_words_counter.most_common(10):
-        print(f"  {word}: {count}")
+    # 1. Unique pages count
+    report_lines.append(f"1. Unique pages found: {len(UNIQUE_PAGES)}")
+    report_lines.append("")
     
-    print("\nSubdomains found:")
+    # 2. Longest page
+    report_lines.append(f"2. Longest page in terms of number of words:")
+    report_lines.append(f"   URL: {LONGEST_PAGE['url']}")
+    report_lines.append(f"   Word count: {LONGEST_PAGE['word_count']}")
+    report_lines.append("")
+    
+    # 3. 50 most common words
+    report_lines.append("3. 50 most common words in the entire set of pages (ignoring English stop words):")
+    
+    # Get top 50 words
+    for i, (word, count) in enumerate(ALL_WORDS_COUNTER.most_common(50), 1):
+        report_lines.append(f"   {i:2d}. {word}: {count}")
+    report_lines.append("")
+    
+    # 4. Subdomains in uci.edu domain
+    report_lines.append("4. Subdomains found in the uci.edu domain:")
+    
+    # Filter and sort subdomains
     uci_subdomains = {}
-    for subdomain, urls in subdomains.items():
+    for subdomain, urls in ALL_SUBDOMAINS.items():
         if subdomain.endswith('.uci.edu'):
             uci_subdomains[subdomain] = len(urls)
     
     for subdomain in sorted(uci_subdomains.keys()):
-        print(f"  {subdomain}: {uci_subdomains[subdomain]} pages")
+        report_lines.append(f"   {subdomain}, {uci_subdomains[subdomain]}")
     
-    return {
-        'unique_pages': len(unique_urls),
-        'longest_page': longest_page,
-        'top_words': dict(all_words_counter.most_common(50)),
-        'subdomains': uci_subdomains
-    }
+    return "\n".join(report_lines)
+
+def save_report(filename="crawler_report.txt"):
+    """Save report to file"""
+    report = generate_report()
+    with open(filename, 'w', encoding='utf-8') as f:
+        f.write(report)
+    print(f"Report saved to {filename}")
+
+import atexit # using for debugging rn but get rid of for final
+page_counter = 0
+
+def scraper(url, resp):
+    global page_counter
+    page_counter += 1
+    if page_counter % 100 == 0:
+        print(f"DEBUG: Processed {page_counter} pages, unique so far: {len(UNIQUE_PAGES)}")
+    
+    links = extract_next_links(url, resp)
+    
+    if resp.status == 200 and resp.raw_response and resp.raw_response.content:
+        try:
+            # Extract text from HTML
+            html_content = resp.raw_response.content
+            text = extract_text_from_html(html_content)
+            
+            # Update statistics
+            update_statistics(url, text)
+            
+        except Exception as e:
+            print(f"Error processing {url}: {e}")
+    
+    # Return only valid links
+    valid_links = []
+    for link in links:
+        if is_valid(link):
+            valid_links.append(link)
+    
+    return valid_links
+atexit.register(lambda: print(f"\nFinal count: Processed {page_counter} pages, found {len(UNIQUE_PAGES)} unique URLs"))
+atexit.register(save_report)
