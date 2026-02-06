@@ -2,9 +2,21 @@ import re
 from urllib.parse import urlparse, urljoin, urldefrag
 from bs4 import BeautifulSoup
 from collections import defaultdict, Counter
+
 #TODO:
-# remove number from most common words
-# still need full runthrough at least once :/
+# STILL NEED TO DO FULL RUNTHROUGH !! [*]
+#   - I ran it for like 2+ hoursish and it found like 5000 unique urls
+#     but then I had to leave for the quiz and when I came back the server had crashed
+#
+# ADD YOUR STUDENT ID TO CONFIG.INI
+#
+# Avoid very small or very large files [*] IMPORTANT
+#
+# Clean everything up, especially trap-checking logic 
+#
+# When finally done:
+# go through and comment explaining everything so we're on the same page
+# we're on the same page for the code review
 
 # Simple statistics containers
 UNIQUE_PAGES = set()
@@ -41,7 +53,9 @@ KNOWN_TRAP_PATTERNS = [
     r'.*/calendar/.*',
     r'.*/ical/.*',
     r'.*/~eppstein/pix/.*',
-    r'.*/doku.php.*',
+    r'.*doku\.php.*',
+    r'.*/doku\.php\?.*',
+    r'.*/wiki/doku\.php\?.*',
     r'.*/~dechter/.*', # unsure abt this one
 ]
 
@@ -53,7 +67,7 @@ KNOWN_TRAP_DOMAINS = {
 }
 
 def normalize_url(url):
-    """Simple URL normalization - remove fragment and normalize"""
+    """URL normalization (remove fragment and normalize)"""
     url, _ = urldefrag(url)
     url = url.lower()
     # Remove trailing slash
@@ -73,10 +87,8 @@ def extract_text_from_html(html_content):
         for script in soup(["script", "style"]):
             script.decompose()
         
-        # Get text
+        # get text and clean up whitespace
         text = soup.get_text()
-        
-        # Clean up whitespace
         lines = (line.strip() for line in text.splitlines())
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
         text = ' '.join(chunk for chunk in chunks if chunk)
@@ -92,10 +104,8 @@ def tokenize_text(text):
     
     tokens = []
     
-    # Convert to lowercase
     text = text.lower()
     
-    # Process each line
     lines = text.split('\n')
     for line in lines:
         line_words = line.split()
@@ -151,7 +161,9 @@ def update_statistics(url, text):
     ALL_SUBDOMAINS[domain].add(normalized_url)
 
 def extract_next_links(url, resp):
-    """Extract links from a webpage response"""
+    """
+    Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
+    """
     links = []
     if resp.status != 200: # 200 is OK, you got the page
         return links
@@ -160,10 +172,12 @@ def extract_next_links(url, resp):
         return links
     
     try:
-        soup = BeautifulSoup(resp.raw_response.content, 'html.parser')
+        # REFERENCE: https://www.geeksforgeeks.org/python/beautifulsoup-scraping-paragraphs-from-html/
+        html_parse = BeautifulSoup(resp.raw_response.content, 'html.parser')
         
-        for a_tag in soup.find_all('a', href=True): # Find all anchor tags
+        for a_tag in html_parse.find_all('a', href=True): # extracting all the URLs found within a page's <a> tags (anchor tags)
             href = a_tag['href']
+            # REFERENCE: https://www.crummy.com/software/BeautifulSoup/bs4/doc/ 
             
             # Skip empty links and javascript links
             if not href or href.startswith(('javascript:', 'mailto:', 'tel:')):
@@ -172,7 +186,7 @@ def extract_next_links(url, resp):
             absolute_url = urljoin(url, href) # handle relative URLs
             normalized_url = normalize_url(absolute_url) # normalize URL
             links.append(normalized_url)
-            
+                            
     except Exception as e:
         print(f"Error extracting links from {url}: {e}")
     
@@ -183,14 +197,14 @@ def is_valid(url):
     try:
         parsed = urlparse(url)
         
-        if parsed.scheme not in {"http", "https"}: # scheme check
+        if parsed.scheme not in {"http", "https"}:
             return False
         
-        domain = parsed.netloc.lower() # domain check
+        domain = parsed.netloc.lower()
         if not domain:
             return False
         
-        if domain in KNOWN_TRAP_DOMAINS: # trap check
+        if domain in KNOWN_TRAP_DOMAINS:
             return False
         
         allowed_domains = ['ics.uci.edu', 'cs.uci.edu', 'informatics.uci.edu', 'stat.uci.edu']
@@ -200,13 +214,38 @@ def is_valid(url):
                 is_allowed = True
                 break
         if not is_allowed:
-            return False     
+            return False
+        
+        url_lower = url.lower()
+        # POTENTIAL FIXME: trap detection
+        # i think it works now but using both match and search
+        # unsure if both are actually necessary
+        for pattern in KNOWN_TRAP_PATTERNS:
+            # Try re.match first (matches from start of string)
+            if re.match(pattern, url_lower, re.I):
+                return False
+            # Also try re.search (matches anywhere in string)
+            if re.search(pattern, url_lower, re.I):
+                return False
+        
+        string_check = [
+            '/events/',
+            '/event/',
+            '/calendar/',
+            'doku.php',
+            '/~dechter/',
+        ]
+        for indicator in string_check: # backup  string check
+            if indicator in url_lower:
+                return False
+        
+        # All default excep added:  pps, mpg
         return not re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
-            + r"|png|tiff?|mid|mp2|mp3|mp4"
+            + r"|png|tiff?|mid|mp2|mp3|mp4|pps|mpg"
             + r"|wav|avi|mov|mpeg|ram|m4v|mkv|ogg|ogv|pdf"
             + r"|ps|pps|eps|tex|ppt|pptx|doc|docx|xls|xlsx|names"
-            + r"|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso"
+            + r"|data|dat|exe|bz2|tar|msi|mpg|bin|7z|psd|dmg|iso"
             + r"|epub|dll|cnf|tgz|sha1"
             + r"|thmx|mso|arff|rtf|jar|csv"
             + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower())
@@ -307,7 +346,12 @@ def scraper(url, resp):
     links = extract_next_links(url, resp)
     
     if resp.status == 200 and resp.raw_response and resp.raw_response.content:
-        try:
+        try:           
+            # TODO : check for file size 
+            # not sure if this is the way to do it
+            #content_size = len(content)
+            #content = resp.raw_response.content
+
             # Extract text from HTML
             html_content = resp.raw_response.content
             text = extract_text_from_html(html_content)
