@@ -7,7 +7,10 @@ from collections import defaultdict, Counter
 # 2. made a separate function for domain checking 
 # 3. made a separate function to weed out infinite traps
 # 4. cleaned up extract_text_from_html
-# 5. meet low-information detection requirement with is_low_info(_)
+# 5. meet low-information detection requirement with is_low_info(_
+# 6. tried to implement file size checking (MIN_CONTENT_WORDS = 100, MAX_FILE_SIZE=10mb)
+# 7. removed ~dechter from trap detection
+# 8. switched order of some stuff in scraper nothing major
 
 # REASON FOR CHANGES:
 # 1. seemed easier idk + doublechecking
@@ -17,6 +20,10 @@ from collections import defaultdict, Counter
 # 4. I was looking it up and found a cleaner/easier way to do it lol.
 # 5. last update I mentioned that we should implement size checking
 #    but also its a requirement that we try to filter out low info stuff
+# 6. 
+# 7. I couldnt find anyone who blocked out dechter so im thinking maybe 
+#     I only thought it was a trap since the server crashed when I first encountered it?
+# 8. hopefully didnt change anything functionally lol... I was just trying to clean it up not actually change how it works.
 
 # Simple statistics containers
 UNIQUE_PAGES = set()
