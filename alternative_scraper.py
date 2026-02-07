@@ -2,30 +2,10 @@ import re
 from urllib.parse import urlparse, urljoin, urldefrag
 from bs4 import BeautifulSoup
 from collections import defaultdict, Counter
-# Final count: Processed 7426 pages, found 4208 unique URLs
-# CHANGES MADE SINCE LAST PUSH:
-# 1. created a separate container for visited urls
-# 2. made a separate function for domain checking 
-# 3. made a separate function to weed out infinite traps
-# 4. cleaned up extract_text_from_html
-# 5. meet low-information detection requirement with is_low_info(_)
-# 6. removed ~dechter from trap detection
-
-# REASON FOR CHANGES:
-# 1. seemed easier idk + doublechecking
-# (2 & 3): I didn't like how complicated and bulky the is_valid()
-#          function had become, so I wanted to clean it up.
-#          I didn't really add much new here, just made a separate function. 
-# 4. I was looking it up and found a cleaner/easier way to do it lol.
-# 5. last update I mentioned that we should implement size checking
-#    but also its a requirement that we try to filter out low info stuff
-# 6. I couldnt
-
-##TESTED UPDATE !!!! Unique pages found: 4208
+#Final count: Processed 7900 pages, found 4427 unique URLs
 
 # Simple statistics containers
 UNIQUE_PAGES = set()
-VISITED_URLS = set()
 PAGE_WORD_COUNTS = {}
 ALL_WORDS_COUNTER = Counter()
 ALL_SUBDOMAINS = defaultdict(set)
@@ -60,10 +40,6 @@ KNOWN_TRAP_PATTERNS = [
     r'.*/calendar/.*',
     r'.*/ical/.*',
     r'.*/~eppstein/pix/.*',
-    r'.*doku\.php.*',
-    r'.*/doku\.php\?.*',
-    r'.*/wiki/doku\.php\?.*',
-    r'.*/~dechter/.*', # unsure abt this one
 ]
 
 KNOWN_TRAP_DOMAINS = {
@@ -175,12 +151,28 @@ def is_low_information_page(text, html_content):
 
 def is_infinite_trap_url(url):
     """
-    Detect infinite traps via URL patterns (pagination, session IDs, etc.)
-    Returns True if URL looks like an infinite trap
-    # https://support.archive-it.org/hc/en-us/articles/208332963-Modify-crawl-scope-with-a-Regular-Expression 
-    # ^.*(/misc|/sites|/all|/themes|/modules|/profiles|/css|/field|/node|/theme){3}.*$
+    prevent falling into infinite traps (returns true if it is (likely) an inf trap) when:
+    --> special conditions for doku.php
+    --> 
+    
     """
     parsed = urlparse(url)
+    
+    # Check for wiki/doku.php traps
+    path_lower = parsed.path.lower()
+    #if 'doku.php' in path_lower:
+    #    return True
+    
+    # Check for query parameter traps
+    if parsed.query:
+        query_lower = parsed.query.lower()
+        
+        # Wiki/doku.php trap parameters
+        wiki_trap_params = ['do=', 'rev=', 'rev2', 'idx=', 'difftype=']
+        if any(param in query_lower for param in wiki_trap_params):
+            # Check if it's a doku.php page
+            if 'doku.php' in path_lower:
+                return True
     
     # avoid auto-generated pages
     # should already be avoiding by blocking out calendars, etc
@@ -250,8 +242,6 @@ def extract_next_links(url, resp):
             
             absolute_url = urljoin(url, href) # handle relative URLs
             normalized_url = normalize_url(absolute_url) # normalize URL
-            if normalized_url in VISITED_URLS:
-                continue
             links.append(normalized_url)
                             
     except Exception as e:
@@ -290,13 +280,13 @@ def is_valid(url):
             '/events/',
             '/event/',
             '/calendar/',
-            'doku.php',
+            #'doku.php',
         ]
         for indicator in string_check: # backup  string check
             if indicator in url_lower:
                 return False
         
-        # All default except added:  pps, mpg DO NOT DELETE MPG ESPECIALLY IT CRASHED THE CRAWLER !!!
+        # All default excep added:  pps, mpg DO NOT DELETE MPG ESPECIALLY IT CRASHED THE CRAWLER !!!
         return not re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
             + r"|png|tiff?|mid|mp2|mp3|mp4|mpg|pps"
@@ -362,11 +352,6 @@ def scraper(url, resp):
     page_counter += 1
     if page_counter % 100 == 0:
         print(f"DEBUG: Processed {page_counter} pages, unique so far: {len(UNIQUE_PAGES)}")
-    
-    normalized_url = normalize_url(url)
-    if normalized_url in VISITED_URLS:
-        return []
-    VISITED_URLS.add(normalized_url)
     
     if resp.status == 200 and resp.raw_response and resp.raw_response.content:
         try:           
