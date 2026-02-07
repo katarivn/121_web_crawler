@@ -2,15 +2,14 @@ import re
 from urllib.parse import urlparse, urljoin, urldefrag
 from bs4 import BeautifulSoup
 from collections import defaultdict, Counter
+# Final count: Processed 7426 pages, found 4208 unique URLs
 # CHANGES MADE SINCE LAST PUSH:
 # 1. created a separate container for visited urls
 # 2. made a separate function for domain checking 
 # 3. made a separate function to weed out infinite traps
 # 4. cleaned up extract_text_from_html
-# 5. meet low-information detection requirement with is_low_info(_
-# 6. tried to implement file size checking (MIN_CONTENT_WORDS = 100, MAX_FILE_SIZE=10mb)
-# 7. removed ~dechter from trap detection
-# 8. switched order of some stuff in scraper nothing major
+# 5. meet low-information detection requirement with is_low_info(_)
+# 6. removed ~dechter from trap detection
 
 # REASON FOR CHANGES:
 # 1. seemed easier idk + doublechecking
@@ -20,10 +19,9 @@ from collections import defaultdict, Counter
 # 4. I was looking it up and found a cleaner/easier way to do it lol.
 # 5. last update I mentioned that we should implement size checking
 #    but also its a requirement that we try to filter out low info stuff
-# 6. 
-# 7. I couldnt find anyone who blocked out dechter so im thinking maybe 
-#     I only thought it was a trap since the server crashed when I first encountered it?
-# 8. hopefully didnt change anything functionally lol... I was just trying to clean it up not actually change how it works.
+# 6. I couldnt
+
+##TESTED UPDATE !!!! Unique pages found: 4208
 
 # Simple statistics containers
 UNIQUE_PAGES = set()
@@ -65,7 +63,7 @@ KNOWN_TRAP_PATTERNS = [
     r'.*doku\.php.*',
     r'.*/doku\.php\?.*',
     r'.*/wiki/doku\.php\?.*',
-    #r'.*/~dechter/.*', # unsure abt this one
+    r'.*/~dechter/.*', # unsure abt this one
 ]
 
 KNOWN_TRAP_DOMAINS = {
@@ -75,7 +73,7 @@ KNOWN_TRAP_DOMAINS = {
     'grape.ics.uci.edu'
 }
 
-MIN_CONTENT_WORDS = 100
+MIN_CONTENT_WORDS = 50
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB i saw someone recommend in discord
 
 
@@ -105,7 +103,6 @@ def is_valid_domain(domain):
                     return True
             else:
                 return True
-    return False
 
 def extract_text_from_html(html_content):
     """Extract clean text from HTML using stripped_strings"""
@@ -170,7 +167,7 @@ def is_low_information_page(text, html_content):
     # text-to-HTML ratio (we're picking 5%) but if we need to can change
     text_length = len(text)
     html_length = len(html_content) if html_content else 0
-    
+
     if html_length > 0 and text_length / html_length < 0.05:
         return True
     
@@ -194,19 +191,9 @@ def is_infinite_trap_url(url):
         
         if URL_PATTERN_COUNTER[normalized] > 20: # subjective 
             return True
-        
-        # Check for session IDs and other trap parameters
-        trap_params = ['sessionid=', 'sid=', 'phpsessid=', 'jsessionid=']
-        query_lower = parsed.query.lower()
-        if any(param in query_lower for param in trap_params):
-            return True
     
     # Check for too many slashes (deep nesting)
-    if url.count('/') > 15:
-        return True
-    
-    # Check for very long URLs
-    if len(url) > 500:
+    if url.count('/') > 20:
         return True
     
     return False
@@ -242,7 +229,7 @@ def extract_next_links(url, resp):
     Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
     """
     links = []
-    if resp.status != 200: # 200 is OK, you got the page
+    if resp.status != 200:
         return links
     
     if not resp.raw_response or not resp.raw_response.content:
@@ -304,19 +291,18 @@ def is_valid(url):
             '/event/',
             '/calendar/',
             'doku.php',
-            #'/~dechter/',
         ]
         for indicator in string_check: # backup  string check
             if indicator in url_lower:
                 return False
         
-        # All default excep added:  pps, mpg
+        # All default except added:  pps, mpg DO NOT DELETE MPG ESPECIALLY IT CRASHED THE CRAWLER !!!
         return not re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
-            + r"|png|tiff?|mid|mp2|mp3|mp4|pps|mpg"
+            + r"|png|tiff?|mid|mp2|mp3|mp4|mpg|pps"
             + r"|wav|avi|mov|mpeg|ram|m4v|mkv|ogg|ogv|pdf"
-            + r"|ps|pps|eps|tex|ppt|pptx|doc|docx|xls|xlsx|names"
-            + r"|data|dat|exe|bz2|tar|msi|mpg|bin|7z|psd|dmg|iso"
+            + r"|ps|eps|tex|ppt|pptx|doc|docx|xls|xlsx|names"
+            + r"|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso"
             + r"|epub|dll|cnf|tgz|sha1"
             + r"|thmx|mso|arff|rtf|jar|csv"
             + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower())
