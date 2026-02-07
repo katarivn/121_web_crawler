@@ -105,6 +105,7 @@ def is_valid_domain(domain):
                     return True
             else:
                 return True
+    return False
 
 def extract_text_from_html(html_content):
     """Extract clean text from HTML using stripped_strings"""
