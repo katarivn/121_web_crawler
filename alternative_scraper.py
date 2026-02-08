@@ -2,7 +2,7 @@ import re
 from urllib.parse import urlparse, urljoin, urldefrag
 from bs4 import BeautifulSoup
 from collections import defaultdict, Counter
-#Final count: Processed 7900 pages, found 4427 unique URLs
+# Final count: Processed 8428 pages, found 4688 unique URLs
 
 # Simple statistics containers
 UNIQUE_PAGES = set()
@@ -10,7 +10,7 @@ PAGE_WORD_COUNTS = {}
 ALL_WORDS_COUNTER = Counter()
 ALL_SUBDOMAINS = defaultdict(set)
 LONGEST_PAGE = {"url": "", "word_count": 0}
-URL_PATTERN_COUNTER = defaultdict(int)
+#URL_PATTERN_COUNTER = defaultdict(int) # for trap detection not published stats btw
 
 STOP_WORDS = {
     "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", 
@@ -43,14 +43,14 @@ KNOWN_TRAP_PATTERNS = [
 ]
 
 KNOWN_TRAP_DOMAINS = {
-    'wics.ics.uci.edu',
-    'ngs.ics.uci.edu',
+    #'wics.ics.uci.edu',
+    #'ngs.ics.uci.edu',
     'isg.ics.uci.edu',
     'grape.ics.uci.edu'
 }
 
 MIN_CONTENT_WORDS = 50
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB i saw someone recommend in discord
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB or =10485760 i saw someone recommend in discord 
 
 
 def normalize_url(url):
@@ -73,12 +73,10 @@ def is_valid_domain(domain):
     
     for allowed in allowed_domains:
         if domain.endswith('.' + allowed): # special handling cecs.uci.edu
-            if allowed == 'cs.uci.edu':
-                prefix = domain[:-10]  # remove "cs.uci.edu"
-                if prefix and prefix.endswith('.'):
-                    return True
-            else:
-                return True
+            return True
+        
+    return False
+            
 
 def extract_text_from_html(html_content):
     """Extract clean text from HTML using stripped_strings"""
@@ -152,40 +150,30 @@ def is_low_information_page(text, html_content):
 def is_infinite_trap_url(url):
     """
     prevent falling into infinite traps (returns true if it is (likely) an inf trap) when:
-    --> special conditions for doku.php
-    --> 
-    
+        --> 'doku.php' traps
+        --> dynamic parameters
+        --> 'doku.php' traps
+        --> deep nesting
     """
     parsed = urlparse(url)
-    
-    # Check for wiki/doku.php traps
     path_lower = parsed.path.lower()
-    #if 'doku.php' in path_lower:
-    #    return True
     
-    # Check for query parameter traps
-    if parsed.query:
+    # special case for doku.php
+    if 'doku.php' in path_lower and parsed.query:
         query_lower = parsed.query.lower()
-        
-        # Wiki/doku.php trap parameters
-        wiki_trap_params = ['do=', 'rev=', 'rev2', 'idx=', 'difftype=']
+        wiki_trap_params = ['do=', 'rev=', 'rev2', 'idx=', 'difftype='] # block problematic parameters DO NOT GET RID OF THIS !
         if any(param in query_lower for param in wiki_trap_params):
-            # Check if it's a doku.php page
-            if 'doku.php' in path_lower:
-                return True
-    
-    # avoid auto-generated pages
-    # should already be avoiding by blocking out calendars, etc
-    # but just in case we missed something
-    if parsed.query:
-        normalized = re.sub(r'\d+', '#', url.lower()) # normalize URL by replacing numbers with #
-        URL_PATTERN_COUNTER[normalized] += 1
-        
-        if URL_PATTERN_COUNTER[normalized] > 20: # subjective 
             return True
     
-    # Check for too many slashes (deep nesting)
-    if url.count('/') > 20:
+    # session IDs, dynamic parameters
+    #if parsed.query:
+    #    normalized = re.sub(r'\d+', '#', url.lower()) # normalize URL by replacing numbers with #
+    #    URL_PATTERN_COUNTER[normalized] += 1
+    #    
+    #    if URL_PATTERN_COUNTER[normalized] > 25: # subjective 
+    #        return True
+        
+    if url.count('/') > 25: #deep nesting
         return True
     
     return False
@@ -280,7 +268,6 @@ def is_valid(url):
             '/events/',
             '/event/',
             '/calendar/',
-            #'doku.php',
         ]
         for indicator in string_check: # backup  string check
             if indicator in url_lower:
@@ -353,6 +340,8 @@ def scraper(url, resp):
     if page_counter % 100 == 0:
         print(f"DEBUG: Processed {page_counter} pages, unique so far: {len(UNIQUE_PAGES)}")
     
+    links = extract_next_links(url, resp)
+
     if resp.status == 200 and resp.raw_response and resp.raw_response.content:
         try:           
             # Extract text from HTML
@@ -367,7 +356,7 @@ def scraper(url, resp):
         except Exception as e:
             print(f"Error processing {url}: {e}")
 
-    links = extract_next_links(url, resp)
+    #links = extract_next_links(url, resp)
     
     # Return only valid links
     valid_links = []
